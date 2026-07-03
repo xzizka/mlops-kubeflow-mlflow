@@ -1,0 +1,22 @@
+# Tells the KFP v2 launcher how to reach the object store for the minio:// scheme.
+# Points at the shared MinIO instead of KFP's bundled (broken) seaweedfs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kfp-launcher
+  namespace: kubeflow
+  labels:
+    application-crd-id: kubeflow-pipelines
+data:
+  defaultPipelineRoot: minio://mlpipeline
+  providers: |
+    minio:
+      endpoint: minio.minio.svc.cluster.local:9000
+      disableSSL: true
+      region: us-east-1
+      credentials:
+        fromEnv: false
+        secretRef:
+          secretName: mlpipeline-minio-artifact
+          accessKeyKey: accesskey
+          secretKeyKey: secretkey

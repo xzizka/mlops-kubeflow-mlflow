@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-pipeline-ui
+  namespace: kubeflow
+  annotations:
+    projectcontour.io/response-timeout: "300s"
+spec:
+  ingressClassName: contour
+  rules:
+  - host: kubeflow.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: ml-pipeline-ui, port: {number: 80}}}

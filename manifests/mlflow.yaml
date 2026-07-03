@@ -1,0 +1,72 @@
+# Rendered through envsubst (MINIO_ROOT_USER, MINIO_ROOT_PASSWORD).
+# Lightweight MLflow tracking server: sqlite backend, artifacts in MinIO.
+# Uses python:3.12-slim + pip at start to stay disk-frugal; /etc/gai.conf forces
+# IPv4 so pip works in kind pods that have no IPv6 egress.
+apiVersion: v1
+kind: Namespace
+metadata: {name: mlflow}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: s3-creds, namespace: mlflow}
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER}"
+  AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+  MLFLOW_S3_ENDPOINT_URL: http://minio.minio.svc.cluster.local:9000
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: mlflow-db, namespace: mlflow}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mlflow, namespace: mlflow}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: mlflow}}
+  template:
+    metadata: {labels: {app: mlflow}}
+    spec:
+      containers:
+      - name: mlflow
+        image: python:3.12-slim
+        envFrom: [{secretRef: {name: s3-creds}}]
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          echo 'precedence ::ffff:0:0/96 100' > /etc/gai.conf
+          pip install --no-cache-dir --quiet mlflow==2.19.0 boto3 && \
+          exec mlflow server \
+            --backend-store-uri sqlite:////mlflow/mlflow.db \
+            --default-artifact-root s3://mlflow/ \
+            --host 0.0.0.0 --port 5000 --no-serve-artifacts
+        ports: [{containerPort: 5000}]
+        resources: {requests: {cpu: 100m, memory: 300Mi}, limits: {memory: 900Mi}}
+        volumeMounts: [{name: db, mountPath: /mlflow}]
+        readinessProbe: {httpGet: {path: /health, port: 5000}, initialDelaySeconds: 10, periodSeconds: 10, failureThreshold: 60}
+        startupProbe: {httpGet: {path: /health, port: 5000}, periodSeconds: 10, failureThreshold: 60}
+      volumes:
+      - name: db
+        persistentVolumeClaim: {claimName: mlflow-db}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mlflow, namespace: mlflow}
+spec:
+  selector: {app: mlflow}
+  ports: [{port: 5000, targetPort: 5000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: mlflow, namespace: mlflow}
+spec:
+  ingressClassName: contour
+  rules:
+  - host: mlflow.local
+    http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: mlflow, port: {number: 5000}}}}]}
